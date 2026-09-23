@@ -1,0 +1,14 @@
+{
+  "fire": {
+    "label": "Fire",
+    "blocked_edges": [["lab1","hall"],["hall","exitA"]]
+  },
+  "flood": {
+    "label": "Flood",
+    "blocked_edges": [["library","exitB"],["lobby","canteen"]]
+  },
+  "earthquake": {
+    "label": "Earthquake",
+    "blocked_edges": [["hall","exitA"],["hall","lobby"]]
+  }
+}

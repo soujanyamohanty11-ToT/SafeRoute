@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id":"lab1","label":"Lab 1","x":100,"y":120},
+    {"id":"lab2","label":"Lab 2","x":350,"y":120},
+    {"id":"class1","label":"Class 1","x":100,"y":280},
+    {"id":"hall","label":"Central Hall","x":225,"y":280},
+    {"id":"class2","label":"Class 2","x":350,"y":280},
+    {"id":"library","label":"Library","x":100,"y":440},
+    {"id":"lobby","label":"Lobby","x":225,"y":440},
+    {"id":"canteen","label":"Canteen","x":350,"y":440},
+    {"id":"exitA","label":"Exit A","x":225,"y":40},
+    {"id":"exitB","label":"Exit B","x":80,"y":540},
+    {"id":"exitC","label":"Exit C","x":370,"y":540}
+  ],
+  "edges": [
+    ["lab1","hall"],["lab2","hall"],["class1","hall"],["class2","hall"],
+    ["class1","library"],["hall","lobby"],["class2","canteen"],
+    ["library","lobby"],["lobby","canteen"],["hall","exitA"],
+    ["library","exitB"],["canteen","exitC"]
+  ],
+  "exits": {
+    "exitA": {"capacity":70},
+    "exitB": {"capacity":60},
+    "exitC": {"capacity":80}
+  }
+}
