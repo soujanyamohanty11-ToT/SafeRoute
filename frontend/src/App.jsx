@@ -81,7 +81,7 @@ export default function App() {
           <h1>🚨 SafeRoute</h1>
           <p>Smart Emergency Evacuation System</p>
         </div>
-        <div className="badge">Discrete Mathematics Project</div>
+        <div className="badge">:) DM IA</div>
       </header>
 
       <main>
