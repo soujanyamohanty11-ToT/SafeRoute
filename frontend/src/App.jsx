@@ -1,47 +1,200 @@
 import React, { useEffect, useMemo, useState } from "react";
-import ReactFlow, { Background, Controls, MarkerType } from "reactflow";
+import ReactFlow, {
+  Background,
+  Controls,
+  MarkerType,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath
+} from "reactflow";
+
 import "reactflow/dist/style.css";
 import "./style.css";
 
 const API = "http://127.0.0.1:8000";
 
+function BlockedEdge({
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  markerEnd
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition
+  });
+
+  return (
+    <>
+      {/* Visible red blocked path */}
+
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          stroke: "#ef4444",
+          strokeWidth: 3,
+          strokeDasharray: "6 4"
+        }}
+      />
+
+      {/* Invisible wider hover area */}
+
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={22}
+        style={{
+          pointerEvents: "stroke",
+          cursor: "help"
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      />
+
+      {/* Tooltip */}
+
+      {hovered && (
+        <EdgeLabelRenderer>
+
+          <div
+            className="blocked-edge-tooltip"
+            style={{
+              transform:
+                `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`
+            }}
+          >
+
+            <span className="blocked-icon">
+              !
+            </span>
+
+            <div className="tooltip-content">
+
+              <strong>
+                Path Blocked
+              </strong>
+
+              <span>
+                {data?.reason || "Route unavailable"}
+              </span>
+
+            </div>
+
+          </div>
+
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+
+const edgeTypes = {
+  blocked: BlockedEdge
+};
+
+
 export default function App() {
+
   const [building, setBuilding] = useState(null);
+
   const [emergencies, setEmergencies] = useState({});
+
   const [start, setStart] = useState("lab1");
+
   const [emergency, setEmergency] = useState("fire");
+
   const [people, setPeople] = useState(100);
+
   const [result, setResult] = useState(null);
+
   const [loading, setLoading] = useState(false);
 
+
+  /* =========================
+     LOAD BACKEND DATA
+  ========================= */
+
   useEffect(() => {
+
     Promise.all([
       fetch(`${API}/building`).then(r => r.json()),
       fetch(`${API}/emergencies`).then(r => r.json())
     ])
+
       .then(([b, e]) => {
+
         setBuilding(b);
+
         setEmergencies(e);
+
       })
+
       .catch(error => {
-        console.error("Backend connection error:", error);
+
+        console.error(
+          "Backend connection error:",
+          error
+        );
+
       });
+
   }, []);
 
+
+  /* =========================
+     NODE MAP
+  ========================= */
+
   const nodeMap = useMemo(() => {
+
     const map = {};
 
     building?.nodes.forEach(n => {
+
       map[n.id] = n;
+
     });
 
     return map;
+
   }, [building]);
 
-  const nodes = useMemo(() => {
-    if (!building) return [];
 
-    return building.nodes.map(n => ({
+  /* NODES */
+
+  /* NODES */
+
+const nodes = useMemo(() => {
+  if (!building) return [];
+
+  const reachableExits = new Set(
+    result?.reachable_exits || []
+  );
+
+  return building.nodes.map(n => {
+    const isExit = n.id.startsWith("exit");
+    const isUnavailableExit =
+      isExit &&
+      result &&
+      !reachableExits.has(n.id);
+
+    const isRouteNode =
+      result?.route?.includes(n.id);
+
+    return {
       id: n.id,
 
       position: {
@@ -57,29 +210,46 @@ export default function App() {
         padding: 12,
         borderRadius: 12,
 
-        border: result?.route?.includes(n.id)
+        border: isUnavailableExit
+          ? "2px solid #f87171"
+          : isRouteNode
           ? "3px solid #16a34a"
-          : n.id.startsWith("exit")
+          : isExit
           ? "2px solid #22c55e"
           : "1px solid #cbd5e1",
 
-        background: n.id.startsWith("exit")
-          ? "#ecfdf5"
-          : result?.route?.includes(n.id)
-          ? "#f0fdf4"
-          : "#ffffff",
+        background: isUnavailableExit
+          ? "#fee2e2"
+          : isExit
+          ? "#dcfce7"
+          : "#fff",
+
+        opacity: isUnavailableExit
+          ? 0.98
+          : 1,
 
         fontWeight: 600,
-        color: "#0f172a",
 
-        boxShadow: result?.route?.includes(n.id)
+        color: isUnavailableExit
+          ? "#991b1b"
+          : "#0f172a",
+
+        boxShadow: isRouteNode
           ? "0 4px 14px rgba(22,163,74,0.18)"
           : "0 2px 8px rgba(15,23,42,0.06)"
       }
-    }));
-  }, [building, result]);
+    };
+  });
+
+}, [building, result]);
+
+
+  /* =========================
+     EDGES
+  ========================= */
 
   const edges = useMemo(() => {
+
     if (!building) return [];
 
     const blocked = new Set(
@@ -88,8 +258,55 @@ export default function App() {
       )
     );
 
+
+    /*
+      Get the selected emergency label.
+
+      This makes the reason work even if the
+      backend ID is slightly different from
+      "flood", "earthquake" or "fire".
+    */
+
+    const emergencyLabel =
+      emergencies?.[emergency]?.label?.toLowerCase() ||
+      emergency.toLowerCase();
+
+
+    let blockedReason =
+      "This corridor is unavailable during the selected emergency.";
+
+
+    if (emergencyLabel.includes("flood")) {
+
+      blockedReason =
+        "Flooding has made this corridor inaccessible.";
+
+    }
+
+    else if (emergencyLabel.includes("earthquake")) {
+
+      blockedReason =
+        "Structural damage has blocked this corridor.";
+
+    }
+
+    else if (emergencyLabel.includes("fire")) {
+
+      blockedReason =
+        "Fire or smoke has made this corridor unsafe.";
+
+    }
+
+
     return building.edges.map(([a, b], i) => {
-      const key = [a, b].sort().join("-");
+
+      const key =
+        [a, b].sort().join("-");
+
+
+      const isBlocked =
+        blocked.has(key);
+
 
       const inRoute =
         result?.route?.includes(a) &&
@@ -97,77 +314,175 @@ export default function App() {
         result.route.indexOf(b) ===
           result.route.indexOf(a) + 1;
 
-      const edgeColor = blocked.has(key)
-        ? "#ef4444"
-        : inRoute
-        ? "#16a34a"
-        : "#cbd5e1";
+
+      const edgeColor =
+        isBlocked
+          ? "#ef4444"
+          : inRoute
+          ? "#16a34a"
+          : "#cbd5e1";
+
 
       return {
+
         id: `e${i}`,
 
         source: a,
+
         target: b,
 
-        style: {
-          stroke: edgeColor,
-          strokeWidth: inRoute ? 4 : 2
+
+        /*
+          This is what tells React Flow to use
+          our custom BlockedEdge component.
+        */
+
+        type:
+          isBlocked
+            ? "blocked"
+            : "default",
+
+
+        /*
+          The reason is passed to BlockedEdge.
+        */
+
+        data: {
+
+          reason:
+            isBlocked
+              ? blockedReason
+              : null
+
         },
 
+
+        style: {
+
+          stroke: edgeColor,
+
+          strokeWidth:
+            inRoute
+              ? 4
+              : 2
+
+        },
+
+
         markerEnd: {
-          type: MarkerType.ArrowClosed,
+
+          type:
+            MarkerType.ArrowClosed,
+
           color: edgeColor
+
         }
+
       };
+
     });
-  }, [building, result]);
+
+  }, [
+    building,
+    result,
+    emergency,
+    emergencies
+  ]);
+
+
+  /* =========================
+     CALCULATE ROUTE
+  ========================= */
 
   async function calculate() {
+
     setLoading(true);
 
     try {
-      const response = await fetch(`${API}/evacuation`, {
-        method: "POST",
 
-        headers: {
-          "Content-Type": "application/json"
-        },
+      const response =
+        await fetch(
+          `${API}/evacuation`,
+          {
+            method: "POST",
 
-        body: JSON.stringify({
-          start,
-          emergency,
-          people: Number(people)
-        })
-      });
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
 
-      const data = await response.json();
+            body: JSON.stringify({
+              start,
+              emergency,
+              people: Number(people)
+            })
+          }
+        );
+
+
+      const data =
+        await response.json();
+
 
       setResult(data);
-    } catch (error) {
-      console.error("Evacuation calculation error:", error);
+
+    }
+
+    catch (error) {
+
+      console.error(
+        "Evacuation calculation error:",
+        error
+      );
+
     }
 
     setLoading(false);
+
   }
 
-  if (!building) {
-    return (
-      <div className="loading-screen">
-        <div className="loading-card">
-          <div className="loading-icon">⌁</div>
 
-          <h2>Loading SafeRoute</h2>
+  /* =========================
+     LOADING
+  ========================= */
+
+  if (!building) {
+
+    return (
+
+      <div className="loading-screen">
+
+        <div className="loading-card">
+
+          <div className="loading-icon">
+            ⌁
+          </div>
+
+          <h2>
+            Loading SafeRoute
+          </h2>
 
           <p>
             Preparing the building evacuation network...
           </p>
+
         </div>
+
       </div>
+
     );
+
   }
 
+
+  /* =========================
+     MAIN UI
+  ========================= */
+
   return (
+
     <div className="app">
+
 
       {/* HEADER */}
 
@@ -180,24 +495,31 @@ export default function App() {
           </div>
 
           <div>
-            <h1>SafeRoute</h1>
+
+            <h1>
+              SafeRoute
+            </h1>
 
             <p>
               Smart Emergency Evacuation System
             </p>
+
           </div>
 
         </div>
 
+
         <div className="header-right">
 
           <div className="system-status">
+
             <span className="status-dot"></span>
-            
+
           </div>
 
+
           <div className="dm-badge">
-            
+
           </div>
 
         </div>
@@ -208,6 +530,7 @@ export default function App() {
       {/* MAIN */}
 
       <main>
+
 
         {/* INTRO */}
 
@@ -221,7 +544,6 @@ export default function App() {
 
             <h2>
               Find the safest way out
-
             </h2>
 
             <p>
@@ -230,9 +552,11 @@ export default function App() {
 
           </div>
 
+
           <div className="quick-info">
 
             <div>
+
               <strong>
                 {building.nodes.length}
               </strong>
@@ -240,9 +564,12 @@ export default function App() {
               <span>
                 Locations
               </span>
+
             </div>
 
+
             <div>
+
               <strong>
                 {building.edges.length}
               </strong>
@@ -250,6 +577,7 @@ export default function App() {
               <span>
                 Connections
               </span>
+
             </div>
 
           </div>
@@ -260,6 +588,7 @@ export default function App() {
         {/* DASHBOARD */}
 
         <div className="dashboard-grid">
+
 
           {/* CONTROL PANEL */}
 
@@ -272,6 +601,7 @@ export default function App() {
               </div>
 
               <div>
+
                 <h2>
                   Emergency Simulation
                 </h2>
@@ -279,6 +609,7 @@ export default function App() {
                 <p>
                   Configure the evacuation scenario.
                 </p>
+
               </div>
 
             </div>
@@ -304,12 +635,14 @@ export default function App() {
                     n => !n.id.startsWith("exit")
                   )
                   .map(n => (
+
                     <option
                       key={n.id}
                       value={n.id}
                     >
                       {n.label}
                     </option>
+
                   ))}
 
               </select>
@@ -340,12 +673,14 @@ export default function App() {
 
                 {Object.entries(emergencies).map(
                   ([id, e]) => (
+
                     <option
                       key={id}
                       value={id}
                     >
                       {e.label}
                     </option>
+
                   )
                 )}
 
@@ -393,19 +728,27 @@ export default function App() {
             >
 
               {loading ? (
+
                 <>
+
                   <span className="spinner"></span>
 
                   Calculating Route...
+
                 </>
+
               ) : (
+
                 <>
+
                   Find Safe Route
 
                   <span>
                     →
                   </span>
+
                 </>
+
               )}
 
             </button>
@@ -425,9 +768,12 @@ export default function App() {
 
               </div>
 
+
               <div className="concept-grid">
 
+
                 <div className="concept">
+
                   <strong>
                     Graphs
                   </strong>
@@ -436,9 +782,12 @@ export default function App() {
                     Rooms become vertices
                     and corridors become edges.
                   </span>
+
                 </div>
 
+
                 <div className="concept">
+
                   <strong>
                     BFS
                   </strong>
@@ -447,9 +796,12 @@ export default function App() {
                     Finds a path from the
                     starting location to an exit.
                   </span>
+
                 </div>
 
+
                 <div className="concept">
+
                   <strong>
                     Warshall
                   </strong>
@@ -458,9 +810,12 @@ export default function App() {
                     Checks which locations
                     are reachable from others.
                   </span>
+
                 </div>
 
+
                 <div className="concept">
+
                   <strong>
                     Relations
                   </strong>
@@ -469,9 +824,12 @@ export default function App() {
                     Represent connections
                     between rooms and exits.
                   </span>
+
                 </div>
 
+
                 <div className="concept">
+
                   <strong>
                     Logic
                   </strong>
@@ -480,9 +838,12 @@ export default function App() {
                     Applies conditions such
                     as blocked routes.
                   </span>
+
                 </div>
 
+
                 <div className="concept">
+
                   <strong>
                     Pigeonhole
                   </strong>
@@ -491,7 +852,9 @@ export default function App() {
                     Helps identify when people
                     exceed exit capacity.
                   </span>
+
                 </div>
+
 
               </div>
 
@@ -511,6 +874,7 @@ export default function App() {
               </div>
 
               <div>
+
                 <h2>
                   Building Map
                 </h2>
@@ -518,18 +882,27 @@ export default function App() {
                 <p>
                   Live visualization of the evacuation graph.
                 </p>
+
               </div>
+
 
               <div className="legend">
 
                 <span>
+
                   <i className="legend-green"></i>
+
                   Safe Route
+
                 </span>
 
+
                 <span>
+
                   <i className="legend-red"></i>
+
                   Blocked
+
                 </span>
 
               </div>
@@ -542,6 +915,7 @@ export default function App() {
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
+                edgeTypes={edgeTypes}
                 fitView
               >
 
@@ -561,7 +935,8 @@ export default function App() {
               </span>
 
               Green paths indicate the recommended
-              route. Red paths represent blocked connections.
+              route. Hover over a red path to see
+              why the connection is blocked.
 
             </div>
 
@@ -579,6 +954,7 @@ export default function App() {
               </div>
 
               <div>
+
                 <h2>
                   Route Analysis
                 </h2>
@@ -586,6 +962,7 @@ export default function App() {
                 <p>
                   Results from the evacuation algorithm.
                 </p>
+
               </div>
 
             </div>
@@ -615,6 +992,7 @@ export default function App() {
             ) : (
 
               <div className="results">
+
 
                 {/* STATUS */}
 
@@ -669,6 +1047,7 @@ export default function App() {
 
                   </div>
 
+
                   <div className="metric-card">
 
                     <small>
@@ -692,28 +1071,35 @@ export default function App() {
                     RECOMMENDED ROUTE
                   </small>
 
+
                   <div className="route">
 
                     {result.route.map(
                       (id, index) => (
+
                         <React.Fragment key={id}>
 
                           <span className="route-node">
                             {nodeMap[id]?.label}
                           </span>
 
+
                           {index <
                             result.route.length - 1 && (
+
                             <span className="route-arrow">
                               →
                             </span>
+
                           )}
 
                         </React.Fragment>
+
                       )
                     )}
 
                   </div>
+
 
                   <p>
                     BFS explores the graph
@@ -733,13 +1119,16 @@ export default function App() {
                     Reachable Exits
                   </div>
 
+
                   <div className="exit-list">
 
                     {result.reachable_exits.map(
                       id => (
+
                         <span key={id}>
                           ✓ {nodeMap[id]?.label}
                         </span>
+
                       )
                     )}
 
@@ -755,6 +1144,7 @@ export default function App() {
                   <div className="section-title">
                     Exit Capacity
                   </div>
+
 
                   {Object.entries(
                     result.allocation
@@ -775,6 +1165,7 @@ export default function App() {
 
                       </div>
 
+
                       <div className="capacity-bar">
 
                         <div
@@ -789,6 +1180,7 @@ export default function App() {
                         ></div>
 
                       </div>
+
 
                       <strong>
                         {x.assigned}/{x.capacity}
@@ -858,6 +1250,7 @@ export default function App() {
 
         </div>
 
+
         <span className="footer-tag">
           Built on a foundation of safety
         </span>
@@ -865,6 +1258,7 @@ export default function App() {
       </footer>
 
     </div>
+
   );
 }
 

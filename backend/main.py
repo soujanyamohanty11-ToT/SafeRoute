@@ -52,19 +52,34 @@ def evacuation(req: RouteRequest):
     graph = make_graph(blocked)
 
     exits = list(building["exits"].keys())
+
     reachable = []
     for exit_id in exits:
         if bfs(graph, req.start, [exit_id]):
             reachable.append(exit_id)
 
     route = bfs(graph, req.start, reachable)
-    allocation, unallocated = allocate_people(req.people, {
-        e: building["exits"][e]["capacity"] for e in reachable
-    })
+
+    recommended_exit = route[-1] if route else None
+
+    # Put the recommended exit first
+    allocation_exits = {}
+
+    if recommended_exit:
+        allocation_exits[recommended_exit] = building["exits"][recommended_exit]["capacity"]
+
+    for exit_id in reachable:
+        if exit_id != recommended_exit:
+            allocation_exits[exit_id] = building["exits"][exit_id]["capacity"]
+
+    allocation, unallocated = allocate_people(
+        req.people,
+        allocation_exits
+    )
 
     return {
         "route": route,
-        "recommended_exit": route[-1] if route else None,
+        "recommended_exit": recommended_exit,
         "reachable_exits": reachable,
         "blocked_edges": blocked,
         "allocation": allocation,
