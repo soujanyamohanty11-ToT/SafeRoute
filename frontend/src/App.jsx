@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactFlow, { Background, Controls, MarkerType } from "reactflow";
 import "reactflow/dist/style.css";
+import "./style.css";
 
 const API = "http://127.0.0.1:8000";
 
@@ -17,148 +18,853 @@ export default function App() {
     Promise.all([
       fetch(`${API}/building`).then(r => r.json()),
       fetch(`${API}/emergencies`).then(r => r.json())
-    ]).then(([b, e]) => {
-      setBuilding(b);
-      setEmergencies(e);
-    });
+    ])
+      .then(([b, e]) => {
+        setBuilding(b);
+        setEmergencies(e);
+      })
+      .catch(error => {
+        console.error("Backend connection error:", error);
+      });
   }, []);
 
   const nodeMap = useMemo(() => {
     const map = {};
-    building?.nodes.forEach(n => map[n.id] = n);
+
+    building?.nodes.forEach(n => {
+      map[n.id] = n;
+    });
+
     return map;
   }, [building]);
 
   const nodes = useMemo(() => {
     if (!building) return [];
+
     return building.nodes.map(n => ({
       id: n.id,
-      position: { x: n.x, y: n.y },
-      data: { label: n.label },
+
+      position: {
+        x: n.x,
+        y: n.y
+      },
+
+      data: {
+        label: n.label
+      },
+
       style: {
-        padding: 10,
-        borderRadius: 10,
-        border: result?.route?.includes(n.id) ? "3px solid #16a34a" : "1px solid #94a3b8",
-        background: n.id.startsWith("exit") ? "#dcfce7" : "#fff"
+        padding: 12,
+        borderRadius: 12,
+
+        border: result?.route?.includes(n.id)
+          ? "3px solid #16a34a"
+          : n.id.startsWith("exit")
+          ? "2px solid #22c55e"
+          : "1px solid #cbd5e1",
+
+        background: n.id.startsWith("exit")
+          ? "#ecfdf5"
+          : result?.route?.includes(n.id)
+          ? "#f0fdf4"
+          : "#ffffff",
+
+        fontWeight: 600,
+        color: "#0f172a",
+
+        boxShadow: result?.route?.includes(n.id)
+          ? "0 4px 14px rgba(22,163,74,0.18)"
+          : "0 2px 8px rgba(15,23,42,0.06)"
       }
     }));
   }, [building, result]);
 
   const edges = useMemo(() => {
     if (!building) return [];
-    const blocked = new Set((result?.blocked_edges || []).map(e => [...e].sort().join("-")));
-    return building.edges.map(([a,b], i) => {
-      const key = [a,b].sort().join("-");
-      const inRoute = result?.route?.includes(a) && result?.route?.includes(b) &&
-        result.route.indexOf(b) === result.route.indexOf(a) + 1;
+
+    const blocked = new Set(
+      (result?.blocked_edges || []).map(e =>
+        [...e].sort().join("-")
+      )
+    );
+
+    return building.edges.map(([a, b], i) => {
+      const key = [a, b].sort().join("-");
+
+      const inRoute =
+        result?.route?.includes(a) &&
+        result?.route?.includes(b) &&
+        result.route.indexOf(b) ===
+          result.route.indexOf(a) + 1;
+
+      const edgeColor = blocked.has(key)
+        ? "#ef4444"
+        : inRoute
+        ? "#16a34a"
+        : "#cbd5e1";
+
       return {
         id: `e${i}`,
+
         source: a,
         target: b,
-        style: { stroke: blocked.has(key) ? "#ef4444" : inRoute ? "#16a34a" : "#94a3b8", strokeWidth: inRoute ? 4 : 2 },
-        markerEnd: { type: MarkerType.ArrowClosed }
+
+        style: {
+          stroke: edgeColor,
+          strokeWidth: inRoute ? 4 : 2
+        },
+
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: edgeColor
+        }
       };
     });
   }, [building, result]);
 
   async function calculate() {
     setLoading(true);
-    const response = await fetch(`${API}/evacuation`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ start, emergency, people: Number(people) })
-    });
-    setResult(await response.json());
+
+    try {
+      const response = await fetch(`${API}/evacuation`, {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+          start,
+          emergency,
+          people: Number(people)
+        })
+      });
+
+      const data = await response.json();
+
+      setResult(data);
+    } catch (error) {
+      console.error("Evacuation calculation error:", error);
+    }
+
     setLoading(false);
   }
 
-  if (!building) return <div className="loading">Loading SafeRoute...</div>;
+  if (!building) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-card">
+          <div className="loading-icon">⌁</div>
+
+          <h2>Loading SafeRoute</h2>
+
+          <p>
+            Preparing the building evacuation network...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
-      <header>
-        <div>
-          <h1>🚨 SafeRoute</h1>
-          <p>Smart Emergency Evacuation System</p>
+
+      {/* HEADER */}
+
+      <header className="topbar">
+
+        <div className="brand">
+
+          <div className="brand-icon">
+            ⌂
+          </div>
+
+          <div>
+            <h1>SafeRoute</h1>
+
+            <p>
+              Smart Emergency Evacuation System
+            </p>
+          </div>
+
         </div>
-        <div className="badge">:) DM IA</div>
+
+        <div className="header-right">
+
+          <div className="system-status">
+            <span className="status-dot"></span>
+            
+          </div>
+
+          <div className="dm-badge">
+            
+          </div>
+
+        </div>
+
       </header>
 
+
+      {/* MAIN */}
+
       <main>
-        <section className="panel controls">
-          <h2>Emergency Simulation</h2>
 
-          <label>Starting Location</label>
-          <select value={start} onChange={e => setStart(e.target.value)}>
-            {building.nodes.filter(n => !n.id.startsWith("exit")).map(n =>
-              <option key={n.id} value={n.id}>{n.label}</option>
-            )}
-          </select>
+        {/* INTRO */}
 
-          <label>Emergency</label>
-          <select value={emergency} onChange={e => setEmergency(e.target.value)}>
-            {Object.entries(emergencies).map(([id, e]) =>
-              <option key={id} value={id}>{e.label}</option>
-            )}
-          </select>
+        <div className="page-intro">
 
-          <label>People to Evacuate</label>
-          <input type="number" min="1" value={people} onChange={e => setPeople(e.target.value)} />
+          <div>
 
-          <button onClick={calculate}>{loading ? "Calculating..." : "Find Safe Route"}</button>
+            <p className="eyebrow">
+              EMERGENCY RESPONSE DASHBOARD
+            </p>
 
-          <div className="concepts">
-            <h3>Concepts Used</h3>
-            <span>Graphs</span><span>Relations</span><span>BFS</span>
-            <span>Warshall</span><span>Logic</span><span>Pigeonhole</span>
+            <h2>
+              Find the safest way out
+
+            </h2>
+
+            <p>
+              Assumes the building as a graph and calculates a reachable, capacity-aware evacuation route.
+            </p>
+
           </div>
-        </section>
 
-        <section className="panel map">
-          <h2>Building Map</h2>
-          <div className="flow">
-            <ReactFlow nodes={nodes} edges={edges} fitView>
-              <Background />
-              <Controls />
-            </ReactFlow>
+          <div className="quick-info">
+
+            <div>
+              <strong>
+                {building.nodes.length}
+              </strong>
+
+              <span>
+                Locations
+              </span>
+            </div>
+
+            <div>
+              <strong>
+                {building.edges.length}
+              </strong>
+
+              <span>
+                Connections
+              </span>
+            </div>
+
           </div>
-        </section>
 
-        <section className="panel analysis">
-          <h2>Route Analysis</h2>
-          {!result ? (
-            <p className="muted">Run an emergency simulation to see the recommended route.</p>
-          ) : (
-            <>
-              <div className="status">{result.reachable ? "🟢 Safe route found" : "🔴 No reachable exit"}</div>
-              <div className="metric">
-                <small>Recommended Exit</small>
-                <strong>{nodeMap[result.recommended_exit]?.label || "None"}</strong>
+        </div>
+
+
+        {/* DASHBOARD */}
+
+        <div className="dashboard-grid">
+
+          {/* CONTROL PANEL */}
+
+          <section className="panel controls">
+
+            <div className="panel-heading">
+
+              <div className="panel-icon">
+                ⚙
               </div>
-              <div className="metric">
-                <small>Route</small>
-                <strong>{result.route.map(id => nodeMap[id]?.label).join(" → ") || "No route"}</strong>
+
+              <div>
+                <h2>
+                  Emergency Simulation
+                </h2>
+
+                <p>
+                  Configure the evacuation scenario.
+                </p>
               </div>
-              <div className="metric">
-                <small>Reachable Exits</small>
-                <strong>{result.reachable_exits.map(id => nodeMap[id]?.label).join(", ") || "None"}</strong>
-              </div>
-              <h3>Exit Capacity</h3>
-              {Object.entries(result.allocation).map(([id, x]) =>
-                <div className="capacity" key={id}>
-                  <span>{nodeMap[id]?.label}</span>
-                  <span>{x.assigned}/{x.capacity}</span>
-                </div>
+
+            </div>
+
+
+            {/* START LOCATION */}
+
+            <div className="form-group">
+
+              <label>
+                Starting Location
+              </label>
+
+              <select
+                value={start}
+                onChange={e =>
+                  setStart(e.target.value)
+                }
+              >
+
+                {building.nodes
+                  .filter(
+                    n => !n.id.startsWith("exit")
+                  )
+                  .map(n => (
+                    <option
+                      key={n.id}
+                      value={n.id}
+                    >
+                      {n.label}
+                    </option>
+                  ))}
+
+              </select>
+
+              <small>
+                This becomes the
+                <b> starting vertex </b>
+                of the evacuation graph.
+              </small>
+
+            </div>
+
+
+            {/* EMERGENCY */}
+
+            <div className="form-group">
+
+              <label>
+                Emergency Type
+              </label>
+
+              <select
+                value={emergency}
+                onChange={e =>
+                  setEmergency(e.target.value)
+                }
+              >
+
+                {Object.entries(emergencies).map(
+                  ([id, e]) => (
+                    <option
+                      key={id}
+                      value={id}
+                    >
+                      {e.label}
+                    </option>
+                  )
+                )}
+
+              </select>
+
+              <small>
+                Different emergencies can make
+                certain connections unavailable.
+              </small>
+
+            </div>
+
+
+            {/* PEOPLE */}
+
+            <div className="form-group">
+
+              <label>
+                People to Evacuate
+              </label>
+
+              <input
+                type="number"
+                min="1"
+                value={people}
+                onChange={e =>
+                  setPeople(e.target.value)
+                }
+              />
+
+              <small>
+                Used to check whether available
+                exit capacity is sufficient.
+              </small>
+
+            </div>
+
+
+            {/* BUTTON */}
+
+            <button
+              className="calculate-button"
+              onClick={calculate}
+              disabled={loading}
+            >
+
+              {loading ? (
+                <>
+                  <span className="spinner"></span>
+
+                  Calculating Route...
+                </>
+              ) : (
+                <>
+                  Find Safe Route
+
+                  <span>
+                    →
+                  </span>
+                </>
               )}
-              {result.unallocated > 0 && <div className="warning">⚠️ {result.unallocated} people exceed available exit capacity.</div>}
-            </>
-          )}
-        </section>
+
+            </button>
+
+
+            {/* CONCEPTS */}
+
+            <div className="concept-box">
+
+              <div className="concept-title">
+
+                <span>
+                  ◇
+                </span>
+
+                Discrete Mathematics Behind It
+
+              </div>
+
+              <div className="concept-grid">
+
+                <div className="concept">
+                  <strong>
+                    Graphs
+                  </strong>
+
+                  <span>
+                    Rooms become vertices
+                    and corridors become edges.
+                  </span>
+                </div>
+
+                <div className="concept">
+                  <strong>
+                    BFS
+                  </strong>
+
+                  <span>
+                    Finds a path from the
+                    starting location to an exit.
+                  </span>
+                </div>
+
+                <div className="concept">
+                  <strong>
+                    Warshall
+                  </strong>
+
+                  <span>
+                    Checks which locations
+                    are reachable from others.
+                  </span>
+                </div>
+
+                <div className="concept">
+                  <strong>
+                    Relations
+                  </strong>
+
+                  <span>
+                    Represent connections
+                    between rooms and exits.
+                  </span>
+                </div>
+
+                <div className="concept">
+                  <strong>
+                    Logic
+                  </strong>
+
+                  <span>
+                    Applies conditions such
+                    as blocked routes.
+                  </span>
+                </div>
+
+                <div className="concept">
+                  <strong>
+                    Pigeonhole
+                  </strong>
+
+                  <span>
+                    Helps identify when people
+                    exceed exit capacity.
+                  </span>
+                </div>
+
+              </div>
+
+            </div>
+
+          </section>
+
+
+          {/* MAP */}
+
+          <section className="panel map">
+
+            <div className="panel-heading">
+
+              <div className="panel-icon">
+                ⌖
+              </div>
+
+              <div>
+                <h2>
+                  Building Map
+                </h2>
+
+                <p>
+                  Live visualization of the evacuation graph.
+                </p>
+              </div>
+
+              <div className="legend">
+
+                <span>
+                  <i className="legend-green"></i>
+                  Safe Route
+                </span>
+
+                <span>
+                  <i className="legend-red"></i>
+                  Blocked
+                </span>
+
+              </div>
+
+            </div>
+
+
+            <div className="flow">
+
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                fitView
+              >
+
+                <Background />
+
+                <Controls />
+
+              </ReactFlow>
+
+            </div>
+
+
+            <div className="map-tip">
+
+              <span>
+                ⓘ
+              </span>
+
+              Green paths indicate the recommended
+              route. Red paths represent blocked connections.
+
+            </div>
+
+          </section>
+
+
+          {/* ANALYSIS */}
+
+          <section className="panel analysis">
+
+            <div className="panel-heading">
+
+              <div className="panel-icon">
+                ↗
+              </div>
+
+              <div>
+                <h2>
+                  Route Analysis
+                </h2>
+
+                <p>
+                  Results from the evacuation algorithm.
+                </p>
+              </div>
+
+            </div>
+
+
+            {!result ? (
+
+              <div className="empty-state">
+
+                <div className="empty-icon">
+                  ⌁
+                </div>
+
+                <h3>
+                  Ready to calculate
+                </h3>
+
+                <p>
+                  Select an emergency scenario
+                  and click
+                  <b> Find Safe Route </b>
+                  to analyze the building.
+                </p>
+
+              </div>
+
+            ) : (
+
+              <div className="results">
+
+                {/* STATUS */}
+
+                <div
+                  className={`result-status ${
+                    result.reachable
+                      ? "success"
+                      : "danger"
+                  }`}
+                >
+
+                  <span>
+                    ●
+                  </span>
+
+                  <div>
+
+                    <strong>
+                      {result.reachable
+                        ? "Safe route found"
+                        : "No reachable exit"}
+                    </strong>
+
+                    <small>
+                      {result.reachable
+                        ? "A valid evacuation path is available."
+                        : "The current scenario has no accessible exit."}
+                    </small>
+
+                  </div>
+
+                </div>
+
+
+                {/* METRICS */}
+
+                <div className="metrics">
+
+                  <div className="metric-card">
+
+                    <small>
+                      RECOMMENDED EXIT
+                    </small>
+
+                    <strong>
+                      {
+                        nodeMap[
+                          result.recommended_exit
+                        ]?.label || "None"
+                      }
+                    </strong>
+
+                  </div>
+
+                  <div className="metric-card">
+
+                    <small>
+                      REACHABLE EXITS
+                    </small>
+
+                    <strong>
+                      {result.reachable_exits.length}
+                    </strong>
+
+                  </div>
+
+                </div>
+
+
+                {/* ROUTE */}
+
+                <div className="route-card">
+
+                  <small>
+                    RECOMMENDED ROUTE
+                  </small>
+
+                  <div className="route">
+
+                    {result.route.map(
+                      (id, index) => (
+                        <React.Fragment key={id}>
+
+                          <span className="route-node">
+                            {nodeMap[id]?.label}
+                          </span>
+
+                          {index <
+                            result.route.length - 1 && (
+                            <span className="route-arrow">
+                              →
+                            </span>
+                          )}
+
+                        </React.Fragment>
+                      )
+                    )}
+
+                  </div>
+
+                  <p>
+                    BFS explores the graph
+                    level-by-level to identify
+                    a suitable path from the
+                    starting location.
+                  </p>
+
+                </div>
+
+
+                {/* REACHABLE EXITS */}
+
+                <div className="reachable-box">
+
+                  <div className="section-title">
+                    Reachable Exits
+                  </div>
+
+                  <div className="exit-list">
+
+                    {result.reachable_exits.map(
+                      id => (
+                        <span key={id}>
+                          ✓ {nodeMap[id]?.label}
+                        </span>
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+
+                {/* CAPACITY */}
+
+                <div className="capacity-section">
+
+                  <div className="section-title">
+                    Exit Capacity
+                  </div>
+
+                  {Object.entries(
+                    result.allocation
+                  ).map(([id, x]) => (
+
+                    <div
+                      className="capacity"
+                      key={id}
+                    >
+
+                      <div className="capacity-name">
+
+                        <span className="capacity-icon">
+                          ⇥
+                        </span>
+
+                        {nodeMap[id]?.label}
+
+                      </div>
+
+                      <div className="capacity-bar">
+
+                        <div
+                          style={{
+                            width: `${Math.min(
+                              (x.assigned /
+                                x.capacity) *
+                                100,
+                              100
+                            )}%`
+                          }}
+                        ></div>
+
+                      </div>
+
+                      <strong>
+                        {x.assigned}/{x.capacity}
+                      </strong>
+
+                    </div>
+
+                  ))}
+
+                </div>
+
+
+                {/* WARNING */}
+
+                {result.unallocated > 0 && (
+
+                  <div className="warning">
+
+                    <span>
+                      ⚠
+                    </span>
+
+                    <div>
+
+                      <strong>
+                        Capacity exceeded
+                      </strong>
+
+                      <p>
+                        {result.unallocated}
+                        {" "}people cannot currently
+                        be assigned to an available exit.
+                      </p>
+
+                    </div>
+
+                  </div>
+
+                )}
+
+              </div>
+
+            )}
+
+          </section>
+
+        </div>
+
       </main>
 
+
+      {/* FOOTER */}
+
       <footer>
-        <strong>SafeRoute</strong> demonstrates graph-based evacuation, reachability using Warshall's algorithm, BFS path finding, logical constraints and basic capacity allocation.
+
+        <div>
+
+          <strong>
+            SafeRoute
+          </strong>
+
+          <span>
+            Graph-based emergency evacuation using
+            BFS, Warshall's algorithm, relations,
+            logical constraints and capacity allocation.
+          </span>
+
+        </div>
+
+        <span className="footer-tag">
+          Built on a foundation of safety
+        </span>
+
       </footer>
+
     </div>
   );
 }
+
