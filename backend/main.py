@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 from typing import List, Tuple, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -34,10 +34,13 @@ class RouteRequest(BaseModel):
 class ResponderRequest(BaseModel):
     entry_point: str
     incident_location: str
-    simulated_blockages: Optional[List[Tuple[str, str]]] = []
+    simulated_blockages: List[Tuple[str, str]] = []
+    emergency: Optional[str] = None
+
 
 class RiskAnalysisRequest(BaseModel):
-    simulated_blocked_corridors: List[Tuple[str, str]]
+    simulated_blocked_corridors: List[Tuple[str, str]] = []
+    emergency: Optional[str] = None
 
 
 def make_graph(blocked, extra_simulated_blockages=None):
@@ -180,28 +183,45 @@ def reachability():
 
 @app.post("/responder-path")
 def get_responder_path(req: ResponderRequest):
-    blocked_edges = set()
-    for u, v in req.simulated_blockages:
-        blocked_edges.add((min(u, v), max(u, v)))
+    if req.entry_point == req.incident_location:
+        raise HTTPException(
+            status_code=400,
+            detail="Entry point and incident location must be different.",
+        )
 
-    adj = {n["id"]: [] for n in building.get("nodes", [])}
-    for e in building.get("edges", []):
-        if isinstance(e, (list, tuple)):
-            u, v = e[0], e[1]
-        else:
-            u, v = e["source"], e["target"]
-        adj[u].append(v)
-        adj[v].append(u)
+    blocked = list(req.simulated_blockages)
+    if req.emergency:
+        scenario = emergencies.get(req.emergency)
+        if scenario is None:
+            raise HTTPException(status_code=404, detail="Unknown emergency")
+        blocked.extend(scenario.get("blocked_edges", []))
 
-    result = find_responder_paths(adj, req.entry_point, req.incident_location, blocked_edges)
-    return result
+    graph = make_graph(blocked)
+    blocked_edges = {
+        (min(u, v), max(u, v))
+        for u, v in blocked
+    }
+
+    return find_responder_paths(
+        adjacency=graph,
+        entry_point=req.entry_point,
+        incident_location=req.incident_location,
+        blocked_edges=blocked_edges,
+    )
 
 
 @app.post("/risk-analysis")
 def post_risk_analysis(req: RiskAnalysisRequest):
-    analysis = analyze_risk_scenario(
+    blocked = list(req.simulated_blocked_corridors)
+    if req.emergency:
+        scenario = emergencies.get(req.emergency)
+        if scenario is None:
+            raise HTTPException(status_code=404, detail="Unknown emergency")
+        blocked.extend(scenario.get("blocked_edges", []))
+
+    return analyze_risk_scenario(
         nodes=building.get("nodes", []),
         edges=building.get("edges", []),
-        simulated_blocked_corridors=req.simulated_blocked_corridors
+        simulated_blocked_corridors=blocked,
+        exit_ids=set(building.get("exits", {}).keys()),
     )
-    return analysis

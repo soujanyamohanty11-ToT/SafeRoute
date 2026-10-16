@@ -114,6 +114,9 @@ export default function App() {
       fetch(`${API}/emergencies`).then(r => r.json())
     ])
       .then(([b, e]) => {
+        b.edges = b.edges.map(edge =>
+          Array.isArray(edge) ? edge : [edge.source, edge.target]
+        );
         setBuilding(b);
         setEmergencies(e);
       })
@@ -291,7 +294,8 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          simulated_blocked_corridors: simulatedBlockages
+          simulated_blocked_corridors: simulatedBlockages,
+          emergency
         })
       });
       const riskData = await riskRes.json();
@@ -312,7 +316,8 @@ export default function App() {
         body: JSON.stringify({
           entry_point: entryPoint,
           incident_location: incidentLoc,
-          simulated_blockages: simulatedBlockages
+          simulated_blockages: simulatedBlockages,
+          emergency
         })
       });
       const data = await response.json();
