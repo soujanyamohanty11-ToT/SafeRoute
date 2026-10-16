@@ -421,5 +421,16 @@ export default function GraphView({
         </div>
       </div>
     </div>
+    
   );
+  // Example node styling function update:
+const getNodeStyle = (nodeId) => {
+  if (unreachableRooms.includes(nodeId)) {
+    return { backgroundColor: '#ff4d4f', border: '2px solid #820014' }; // Disconnected room
+  }
+  if (responderPath.includes(nodeId)) {
+    return { backgroundColor: '#1890ff', color: '#fff' }; // Responder route node
+  }
+  return defaultStyle;
+};
 }

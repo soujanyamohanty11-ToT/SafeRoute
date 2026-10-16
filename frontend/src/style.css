@@ -65,6 +65,34 @@ body {
   font-size: 12px;
 }
 
+/* TABS NAVIGATION IN HEADER */
+
+.module-tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.module-tabs .calculate-button {
+  margin: 0;
+  width: auto;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  font-size: 13px;
+  padding: 8px 16px;
+}
+
+.module-tabs .calculate-button:hover {
+  background: #334155;
+  color: white;
+}
+
+.module-tabs .calculate-button.active-tab {
+  background: #16a34a;
+  color: white;
+  border-color: #16a34a;
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -373,6 +401,85 @@ main {
 
 
 /* =========================
+   SIMULATED CORRIDORS UI
+========================= */
+
+.corridor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.corridor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.text-btn {
+  background: none;
+  border: none;
+  color: #16a34a;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.text-btn:hover {
+  color: #15803d;
+  text-decoration: underline;
+}
+
+.corridor-list-container {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.corridor-checkbox-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.corridor-checkbox-card:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.corridor-checkbox-card input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #16a34a;
+  cursor: pointer;
+}
+
+.corridor-label {
+  font-weight: 600;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+/* =========================
    CONCEPTS
 ========================= */
 
@@ -435,11 +542,15 @@ main {
 
 
 /* =========================
-   MAP
+   MAP & REACTFLOW FIX
 ========================= */
 
 .map {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 600px; /* Ensures panel holds structural height in grid */
 }
 
 .legend {
@@ -478,9 +589,17 @@ main {
 }
 
 .flow {
-  height: 550px;
-
+  width: 100%;
+  height: 520px; /* Explicit height required by ReactFlow */
+  flex: 1;
+  position: relative;
   background: #f8fafc;
+}
+
+/* Forces ReactFlow internal wrapper to span 100% of container */
+.flow .react-flow {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .map-tip {
@@ -532,6 +651,7 @@ main {
   display: flex;
 
   align-items: center;
+
   justify-content: center;
 
   font-size: 25px;
@@ -986,6 +1106,8 @@ footer strong {
     margin-top: 10px;
   }
 }
+
+
 /* =========================
    BLOCKED EDGE HOVER
 ========================= */
@@ -1083,6 +1205,3 @@ footer strong {
   }
 
 }
-
-
-

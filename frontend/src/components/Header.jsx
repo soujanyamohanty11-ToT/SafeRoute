@@ -15,7 +15,9 @@ export default function Header({
   selectedEmergency,
   onSelectEmergency,
   onOpenProtocol,
-  backendConnected
+  backendConnected,
+  activeTab,
+  setActiveTab
 }) {
   const currentScenario = emergencies?.[selectedEmergency];
 
@@ -36,6 +38,31 @@ export default function Header({
       </div>
 
       <div className="header-center">
+        {/* Module Navigation Tabs */}
+        <div className="navigation-tabs" style={{ display: "flex", gap: "8px", marginRight: "16px" }}>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === "evacuation" ? "active" : ""}`}
+            onClick={() => setActiveTab("evacuation")}
+          >
+            Evacuation
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === "responder" ? "active" : ""}`}
+            onClick={() => setActiveTab("responder")}
+          >
+            First Responder Path
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === "risk" ? "active" : ""}`}
+            onClick={() => setActiveTab("risk")}
+          >
+            Risk Analysis
+          </button>
+        </div>
+
         <div className="scenario-selector-pill">
           <span className="scenario-pill-label">Scenario:</span>
           <div className="scenario-tabs">

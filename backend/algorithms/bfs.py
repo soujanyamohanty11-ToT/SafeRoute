@@ -21,3 +21,4 @@ def bfs(graph, start, targets):
                 queue.append(neighbor)
 
     return []
+
