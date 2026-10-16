@@ -13,11 +13,20 @@
     {"id":"exitC","label":"Exit C","x":370,"y":540}
   ],
   "edges": [
-    ["lab1","hall"],["lab2","hall"],["class1","hall"],["class2","hall"],
-    ["class1","library"],["hall","lobby"],["class2","canteen"],
-    ["library","lobby"],["lobby","canteen"],["hall","exitA"],
-    ["library","exitB"],["canteen","exitC"]
-  ],
+  ["lab1","hall"],
+  ["lab1","lab2"],
+  ["lab2","hall"],
+  ["class1","hall"],
+  ["class2","hall"],
+  ["class1","library"],
+  ["hall","lobby"],
+  ["class2","canteen"],
+  ["library","lobby"],
+  ["lobby","canteen"],
+  ["hall","exitA"],
+  ["library","exitB"],
+  ["canteen","exitC"]
+],
   "exits": {
     "exitA": {"capacity":70},
     "exitB": {"capacity":60},
