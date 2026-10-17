@@ -9,7 +9,12 @@ from pydantic import BaseModel
 from algorithms.bfs import bfs
 from algorithms.warshall import warshall
 from algorithms.allocation import allocate_people
-from algorithms.responder_and_risk import find_responder_paths, analyze_risk_scenario
+from algorithms.responder_and_risk import (
+    find_responder_paths,
+    analyze_risk_scenario,
+    find_civilian_route,
+    find_shared_corridors,
+)
 
 BASE = Path(__file__).parent
 building = json.loads((BASE / "data/building.json").read_text())
@@ -36,6 +41,8 @@ class ResponderRequest(BaseModel):
     incident_location: str
     simulated_blockages: List[Tuple[str, str]] = []
     emergency: Optional[str] = None
+    # Where civilians evacuate from. Defaults to the incident location.
+    civilian_start: Optional[str] = None
 
 
 class RiskAnalysisRequest(BaseModel):
@@ -202,12 +209,35 @@ def get_responder_path(req: ResponderRequest):
         for u, v in blocked
     }
 
-    return find_responder_paths(
+    result = find_responder_paths(
         adjacency=graph,
         entry_point=req.entry_point,
         incident_location=req.incident_location,
         blocked_edges=blocked_edges,
     )
+
+    # Civilian evacuation from the same blocked-corridor graph, then overlap.
+    civilian_start = req.civilian_start or req.incident_location
+    civ = find_civilian_route(
+        adjacency=graph,
+        civilian_start=civilian_start,
+        exit_ids=set(building.get("exits", {}).keys()),
+        avoid_edges={
+            (min(a, b), max(a, b))
+            for a, b in zip(result["primary_route"], result["primary_route"][1:])
+        },
+    )
+    shared = find_shared_corridors(result["primary_route"], civ["route"])
+
+    result.update({
+        "civilian_start": civilian_start,
+        "civilian_route": civ["route"],
+        "civilian_exit": civ["exit"],
+        "civilian_conflict_free_route": civ["conflict_free_route"],
+        "shared_corridors": shared,
+        "blocked_edges": sorted([list(e) for e in blocked_edges]),
+    })
+    return result
 
 
 @app.post("/risk-analysis")

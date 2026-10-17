@@ -1205,3 +1205,38 @@ footer strong {
   }
 
 }
+
+/* ===== Responder tab: emergency summary, overlap ===== */
+.legend-blue { background: #2563eb; }
+.legend-amber { background: #f59e0b; }
+
+.blocked-summary {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  color: #991b1b;
+}
+.blocked-summary ul { margin: 4px 0 0; padding-left: 18px; }
+
+.corridor-tag { color: #b91c1c; font-style: normal; font-size: 0.75rem; }
+.corridor-checkbox-card input:disabled + .corridor-label { opacity: 0.8; }
+
+.overlap-card {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #f59e0b;
+  background: #fef3c7;
+  border-radius: 12px;
+  color: #78350f;
+  font-size: 0.85rem;
+}
+.overlap-title { display: flex; gap: 8px; font-weight: 700; color: #b45309; margin-bottom: 6px; }
+.overlap-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.overlap-card li { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.flow-tag { font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.flow-tag.counter { background: #fee2e2; color: #991b1b; }
+.flow-tag.same { background: #e0f2fe; color: #075985; }
+.overlap-hint { margin: 8px 0 0; }

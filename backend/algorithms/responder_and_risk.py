@@ -165,3 +165,80 @@ def analyze_risk_scenario(
         "risk_score": risk_score,
         "suggestions": suggestions,
     }
+
+
+def _route_edges(route: List[str]) -> List[Edge]:
+    return [(a, b) for a, b in zip(route, route[1:])]
+
+
+def find_civilian_route(
+    adjacency: Dict[str, List[str]],
+    civilian_start: str,
+    exit_ids: Set[str],
+    avoid_edges: Optional[Set[Edge]] = None,
+) -> Dict[str, Any]:
+    """Shortest route from civilian_start to the nearest reachable exit.
+
+    Also looks for the shortest route to any exit that shares no corridor with
+    `avoid_edges` (the responder route), so the planner can suggest a
+    non-conflicting alternative.
+    """
+    avoid = {normalize_edge(u, v) for u, v in (avoid_edges or set())}
+
+    def shortest(target: str) -> List[str]:
+        queue = deque([[civilian_start]])
+        seen = {civilian_start}
+        while queue:
+            path = queue.popleft()
+            if path[-1] == target:
+                return path
+            for nb in adjacency.get(path[-1], []):
+                if nb not in seen:
+                    seen.add(nb)
+                    queue.append(path + [nb])
+        return []
+
+    if civilian_start not in adjacency:
+        return {"route": [], "exit": None, "conflict_free_route": []}
+
+    options = []
+    for ex in sorted(exit_ids):
+        if ex in adjacency:
+            path = shortest(ex)
+            if path:
+                options.append(path)
+    options.sort(key=len)
+
+    if not options:
+        return {"route": [], "exit": None, "conflict_free_route": []}
+
+    best = options[0]
+    clear = [
+        r for r in options
+        if not ({normalize_edge(u, v) for u, v in _route_edges(r)} & avoid)
+    ]
+    return {
+        "route": best,
+        "exit": best[-1],
+        "conflict_free_route": clear[0] if clear else [],
+    }
+
+
+def find_shared_corridors(
+    responder_route: List[str], civilian_route: List[str]
+) -> List[Dict[str, Any]]:
+    """Corridors used by both groups. `counterflow` is True when responders
+    and civilians traverse the corridor in opposite directions."""
+    civ = {}
+    for u, v in _route_edges(civilian_route):
+        civ[normalize_edge(u, v)] = (u, v)
+
+    shared = []
+    for u, v in _route_edges(responder_route):
+        key = normalize_edge(u, v)
+        if key in civ:
+            shared.append({
+                "edge": [u, v],
+                "counterflow": civ[key] != (u, v),
+            })
+    return shared

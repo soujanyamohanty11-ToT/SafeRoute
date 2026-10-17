@@ -79,6 +79,16 @@ function BlockedEdge({
   );
 }
 
+const edgeKey = (u, v) => [u, v].sort().join("-");
+
+function blockedReasonFor(label) {
+  const l = (label || "").toLowerCase();
+  if (l.includes("flood")) return "Flooding has made this corridor inaccessible.";
+  if (l.includes("earthquake")) return "Structural damage has blocked this corridor.";
+  if (l.includes("fire")) return "Fire or smoke has made this corridor unsafe.";
+  return "This corridor is unavailable during the selected emergency.";
+}
+
 const edgeTypes = {
   blocked: BlockedEdge
 };
@@ -100,10 +110,21 @@ export default function App() {
   const [loading, setLoading] = useState(false);
 
   // First Responder State
-  const [entryPoint, setEntryPoint] = useState("exit1");
+  const [entryPoint, setEntryPoint] = useState("exitA");
   const [incidentLoc, setIncidentLoc] = useState("lab1");
+  const [civilianStart, setCivilianStart] = useState(""); // "" = same as incident
+  const [responderEmergency, setResponderEmergency] = useState("fire"); // "none" = no emergency
+  const [responderBlockages, setResponderBlockages] = useState([]);
   const [responderData, setResponderData] = useState(null);
+  const [responderError, setResponderError] = useState(null);
   const [responderLoading, setResponderLoading] = useState(false);
+
+  // Any change to the responder inputs makes the last result stale, so clear it
+  // rather than draw old routes over a newly selected set of blocked corridors.
+  useEffect(() => {
+    setResponderData(null);
+    setResponderError(null);
+  }, [entryPoint, incidentLoc, civilianStart, responderEmergency, responderBlockages]);
 
   /* =========================
      LOAD INITIAL DATA
@@ -137,50 +158,97 @@ export default function App() {
   }, [building]);
 
   /* =========================
+     RESPONDER TAB: BLOCKED CORRIDORS (live from selection)
+  ========================= */
+  const responderBlocked = useMemo(() => {
+    const map = new Map(); // edge key -> reason
+    const em = emergencies?.[responderEmergency];
+    (em?.blocked_edges || []).forEach(([u, v]) =>
+      map.set(edgeKey(u, v), blockedReasonFor(em.label || responderEmergency))
+    );
+    responderBlockages.forEach(([u, v]) => {
+      if (!map.has(edgeKey(u, v))) map.set(edgeKey(u, v), "Simulated corridor blockage.");
+    });
+    return map;
+  }, [emergencies, responderEmergency, responderBlockages]);
+
+  /* =========================
      MAP NODES
   ========================= */
   const nodes = useMemo(() => {
     if (!building) return [];
 
+    const inEvac = activeTab === "evacuation";
+    const inResp = activeTab === "responder";
+
     const reachableExits = new Set(evacResult?.reachable_exits || []);
-    const unreachableRooms = new Set(riskResult?.unreachable_rooms || []);
-    const responderPrimary = new Set(responderData?.primary_route || []);
+    const unreachableRooms = new Set(inEvac ? riskResult?.unreachable_rooms || [] : []);
+    const responderRoute = new Set(inResp ? responderData?.primary_route || [] : []);
+    const civilianRoute = new Set(inResp ? responderData?.civilian_route || [] : []);
+    const sharedNodes = new Set();
+    if (inResp) {
+      (responderData?.shared_corridors || []).forEach(({ edge }) => {
+        sharedNodes.add(edge[0]);
+        sharedNodes.add(edge[1]);
+      });
+    }
+    const civStart = civilianStart || incidentLoc;
 
     return building.nodes.map(n => {
       const isExit = n.id.startsWith("exit");
-      const isUnavailableExit = isExit && evacResult && !reachableExits.has(n.id);
-      const isEvacRouteNode = evacResult?.route?.includes(n.id);
+      const isUnavailableExit = inEvac && isExit && evacResult && !reachableExits.has(n.id);
+      const isEvacRouteNode = inEvac && evacResult?.route?.includes(n.id);
       const isUnreachableRoom = unreachableRooms.has(n.id);
-      const isResponderNode = activeTab === "responder" && responderPrimary.has(n.id);
 
       let borderStyle = "1px solid #cbd5e1";
       let bgStyle = "#fff";
       let textColor = "#0f172a";
+      let highlighted = false;
 
       if (isUnreachableRoom) {
         borderStyle = "3px solid #dc2626";
         bgStyle = "#fee2e2";
         textColor = "#991b1b";
-      } else if (isResponderNode) {
+      } else if (sharedNodes.has(n.id)) {
+        borderStyle = "3px solid #d97706";
+        bgStyle = "#fef3c7";
+        textColor = "#92400e";
+        highlighted = true;
+      } else if (responderRoute.has(n.id)) {
         borderStyle = "3px solid #2563eb";
         bgStyle = "#dbeafe";
         textColor = "#1e40af";
+        highlighted = true;
+      } else if (civilianRoute.has(n.id)) {
+        borderStyle = "3px solid #16a34a";
+        bgStyle = "#dcfce7";
+        textColor = "#166534";
+        highlighted = true;
       } else if (isUnavailableExit) {
         borderStyle = "2px solid #f87171";
         bgStyle = "#fee2e2";
         textColor = "#991b1b";
-      } else if (isEvacRouteNode && activeTab === "evacuation") {
+      } else if (isEvacRouteNode) {
         borderStyle = "3px solid #16a34a";
         bgStyle = "#dcfce7";
+        highlighted = true;
       } else if (isExit) {
         borderStyle = "2px solid #22c55e";
         bgStyle = "#dcfce7";
       }
 
+      // Role markers on the responder map
+      let label = n.label;
+      if (inResp) {
+        if (n.id === incidentLoc) label = `⚠ ${label}`;
+        if (n.id === entryPoint) label = `🚒 ${label}`;
+        if (n.id === civStart && n.id !== incidentLoc) label = `👥 ${label}`;
+      }
+
       return {
         id: n.id,
         position: { x: n.x, y: n.y },
-        data: { label: n.label },
+        data: { label },
         style: {
           padding: 12,
           borderRadius: 12,
@@ -188,13 +256,13 @@ export default function App() {
           background: bgStyle,
           color: textColor,
           fontWeight: 600,
-          boxShadow: isEvacRouteNode || isResponderNode
+          boxShadow: highlighted
             ? "0 4px 14px rgba(0,0,0,0.15)"
             : "0 2px 8px rgba(15,23,42,0.06)"
         }
       };
     });
-  }, [building, evacResult, riskResult, activeTab, responderData]);
+  }, [building, evacResult, riskResult, activeTab, responderData, entryPoint, incidentLoc, civilianStart]);
 
   /* =========================
      MAP EDGES
@@ -202,48 +270,58 @@ export default function App() {
   const edges = useMemo(() => {
     if (!building) return [];
 
+    const inEvac = activeTab === "evacuation";
+    const inResp = activeTab === "responder";
+
     const baseBlocked = new Set(
-      (evacResult?.blocked_edges || []).map(e => [...e].sort().join("-"))
+      inEvac ? (evacResult?.blocked_edges || []).map(([u, v]) => edgeKey(u, v)) : []
     );
-
     const simBlockedSet = new Set(
-      simulatedBlockages.map(([u, v]) => [u, v].sort().join("-"))
+      inEvac ? simulatedBlockages.map(([u, v]) => edgeKey(u, v)) : []
     );
 
-    const responderEdges = new Set();
-    if (responderData?.primary_route) {
-      const p = responderData.primary_route;
-      for (let i = 0; i < p.length - 1; i++) {
-        responderEdges.add([p[i], p[i + 1]].sort().join("-"));
+    const routeEdgeSet = route => {
+      const set = new Set();
+      for (let i = 0; i < (route || []).length - 1; i++) {
+        set.add(edgeKey(route[i], route[i + 1]));
       }
-    }
+      return set;
+    };
+    const responderEdges = inResp ? routeEdgeSet(responderData?.primary_route) : new Set();
+    const civilianEdges = inResp ? routeEdgeSet(responderData?.civilian_route) : new Set();
+    const sharedEdges = new Set(
+      inResp ? (responderData?.shared_corridors || []).map(({ edge }) => edgeKey(edge[0], edge[1])) : []
+    );
 
     const emergencyLabel =
       emergencies?.[emergency]?.label?.toLowerCase() || emergency.toLowerCase();
-
-    let blockedReason = "This corridor is unavailable during the selected emergency.";
-    if (emergencyLabel.includes("flood")) blockedReason = "Flooding has made this corridor inaccessible.";
-    else if (emergencyLabel.includes("earthquake")) blockedReason = "Structural damage has blocked this corridor.";
-    else if (emergencyLabel.includes("fire")) blockedReason = "Fire or smoke has made this corridor unsafe.";
+    const evacBlockedReason = blockedReasonFor(emergencyLabel);
 
     return building.edges.map(([a, b], i) => {
-      const key = [a, b].sort().join("-");
-      const isBaseBlocked = baseBlocked.has(key);
+      const key = edgeKey(a, b);
       const isSimBlocked = simBlockedSet.has(key);
-      const isBlocked = isBaseBlocked || isSimBlocked;
+      const isBlocked = inResp
+        ? responderBlocked.has(key)
+        : baseBlocked.has(key) || isSimBlocked;
 
       const inEvacRoute =
-        activeTab === "evacuation" &&
+        inEvac &&
         evacResult?.route?.includes(a) &&
         evacResult?.route?.includes(b) &&
         Math.abs(evacResult.route.indexOf(a) - evacResult.route.indexOf(b)) === 1;
 
-      const inResponderRoute = activeTab === "responder" && responderEdges.has(key);
+      const isShared = sharedEdges.has(key);
+      const inResponderRoute = responderEdges.has(key);
+      const inCivilianRoute = civilianEdges.has(key);
 
       let edgeColor = "#cbd5e1";
       if (isBlocked) edgeColor = "#ef4444";
+      else if (isShared) edgeColor = "#f59e0b";
       else if (inResponderRoute) edgeColor = "#2563eb";
+      else if (inCivilianRoute) edgeColor = "#16a34a";
       else if (inEvacRoute) edgeColor = "#16a34a";
+
+      const highlighted = inEvacRoute || inResponderRoute || inCivilianRoute;
 
       return {
         id: `e${i}`,
@@ -251,15 +329,17 @@ export default function App() {
         target: b,
         type: isBlocked ? "blocked" : "default",
         data: {
-          reason: isSimBlocked
+          reason: inResp
+            ? responderBlocked.get(key) || null
+            : isSimBlocked
             ? "Simulated corridor blockage."
             : isBlocked
-            ? blockedReason
+            ? evacBlockedReason
             : null
         },
         style: {
           stroke: edgeColor,
-          strokeWidth: inEvacRoute || inResponderRoute ? 4 : 2
+          strokeWidth: isShared ? 6 : highlighted ? 4 : 2
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -267,7 +347,7 @@ export default function App() {
         }
       };
     });
-  }, [building, evacResult, emergency, emergencies, activeTab, simulatedBlockages, responderData]);
+  }, [building, evacResult, emergency, emergencies, activeTab, simulatedBlockages, responderData, responderBlocked]);
 
   /* =========================
      COMBINED CALCULATIONS
@@ -309,6 +389,7 @@ export default function App() {
 
   async function calculateResponderPath() {
     setResponderLoading(true);
+    setResponderError(null);
     try {
       const response = await fetch(`${API}/responder-path`, {
         method: "POST",
@@ -316,17 +397,35 @@ export default function App() {
         body: JSON.stringify({
           entry_point: entryPoint,
           incident_location: incidentLoc,
-          simulated_blockages: simulatedBlockages,
-          emergency
+          simulated_blockages: responderBlockages,
+          emergency: responderEmergency === "none" ? null : responderEmergency,
+          civilian_start: civilianStart || null
         })
       });
       const data = await response.json();
-      setResponderData(data);
+      if (!response.ok) {
+        setResponderData(null);
+        setResponderError(
+          typeof data.detail === "string" ? data.detail : "Could not calculate responder route."
+        );
+      } else {
+        setResponderData(data);
+      }
     } catch (error) {
       console.error("First responder path calculation error:", error);
+      setResponderError("Could not reach the backend. Is it running?");
     }
     setResponderLoading(false);
   }
+
+  const toggleResponderBlockage = ([u, v]) => {
+    const k = edgeKey(u, v);
+    setResponderBlockages(prev =>
+      prev.some(([x, y]) => edgeKey(x, y) === k)
+        ? prev.filter(([x, y]) => edgeKey(x, y) !== k)
+        : [...prev, [u, v]]
+    );
+  };
 
   const toggleSimulatedBlockage = ([u, v]) => {
     const pairKey = [u, v].sort().join("-");
@@ -412,7 +511,7 @@ export default function App() {
             </h2>
             <p>
               {activeTab === "evacuation" && "Calculates optimal evacuation routes, checks exit capacity, and evaluates network risk scores under simulated corridor failure scenarios."}
-              {activeTab === "responder" && "Calculates optimal entry routes for incoming emergency responders while monitoring shared corridor traffic."}
+              {activeTab === "responder" && "Calculates entry routes for incoming responders under the selected emergency, and highlights corridors they share with evacuating civilians."}
             </p>
           </div>
 
@@ -575,8 +674,28 @@ export default function App() {
                   <div className="panel-icon">🚒</div>
                   <div>
                     <h2>Responder Dispatch</h2>
-                    <p>Plan entry path into building incident zone.</p>
+                    <p>Plan the entry path and check it against civilian evacuation.</p>
                   </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Emergency Type</label>
+                  <select value={responderEmergency} onChange={e => setResponderEmergency(e.target.value)}>
+                    <option value="none">None (no emergency blockages)</option>
+                    {Object.entries(emergencies).map(([id, e]) => (
+                      <option key={id} value={id}>{e.label}</option>
+                    ))}
+                  </select>
+                  {responderEmergency !== "none" && (
+                    <div className="blocked-summary">
+                      <small>Blocked by this emergency:</small>
+                      <ul>
+                        {(emergencies[responderEmergency]?.blocked_edges || []).map(([u, v]) => (
+                          <li key={`${u}-${v}`}>{nodeMap[u]?.label || u} ↔ {nodeMap[v]?.label || v}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -599,8 +718,61 @@ export default function App() {
                   </select>
                 </div>
 
+                <div className="form-group">
+                  <label>Civilians Evacuating From</label>
+                  <select value={civilianStart} onChange={e => setCivilianStart(e.target.value)}>
+                    <option value="">Same as incident location</option>
+                    {building.nodes
+                      .filter(n => !n.id.startsWith("exit"))
+                      .map(n => (
+                        <option key={n.id} value={n.id}>{n.label}</option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* ADDITIONAL BLOCKED CORRIDORS */}
+                <div className="form-group" style={{ marginTop: "14px" }}>
+                  <div className="corridor-header">
+                    <label style={{ margin: 0 }}>Additional Blocked Corridors:</label>
+                    <div className="corridor-actions">
+                      <button type="button" className="text-btn" onClick={() => setResponderBlockages(building.edges.map(([u, v]) => [u, v]))}>
+                        Select All
+                      </button>
+                      <span>•</span>
+                      <button type="button" className="text-btn" onClick={() => setResponderBlockages([])}>
+                        Unselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="corridor-list-container">
+                    {building.edges.map(([u, v], idx) => {
+                      const k = edgeKey(u, v);
+                      const fromEmergency =
+                        responderEmergency !== "none" &&
+                        (emergencies[responderEmergency]?.blocked_edges || []).some(([x, y]) => edgeKey(x, y) === k);
+                      const checked =
+                        fromEmergency || responderBlockages.some(([x, y]) => edgeKey(x, y) === k);
+                      return (
+                        <label key={idx} className="corridor-checkbox-card">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={fromEmergency}
+                            onChange={() => toggleResponderBlockage([u, v])}
+                          />
+                          <span className="corridor-label">
+                            {nodeMap[u]?.label || u} ↔ {nodeMap[v]?.label || v}
+                            {fromEmergency && <em className="corridor-tag"> (emergency)</em>}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <button className="calculate-button" onClick={calculateResponderPath} disabled={responderLoading}>
-                  {responderLoading ? "Routing Responders..." : "Find Entry Path →"}
+                  {responderLoading ? "Routing Responders..." : "Find Entry Path & Overlap →"}
                 </button>
               </>
             )}
@@ -616,8 +788,19 @@ export default function App() {
               </div>
 
               <div className="legend">
-                <span><i className="legend-green"></i> Safe Route</span>
-                <span><i className="legend-red"></i> Blocked</span>
+                {activeTab === "responder" ? (
+                  <>
+                    <span><i className="legend-blue"></i> Responders</span>
+                    <span><i className="legend-green"></i> Civilians</span>
+                    <span><i className="legend-amber"></i> Overlap</span>
+                    <span><i className="legend-red"></i> Blocked</span>
+                  </>
+                ) : (
+                  <>
+                    <span><i className="legend-green"></i> Safe Route</span>
+                    <span><i className="legend-red"></i> Blocked</span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -630,7 +813,9 @@ export default function App() {
 
             <div className="map-tip">
               <span>ⓘ</span>
-              Green paths indicate recommended routes. Hover over red dashed corridors to view blockage reasons. Red rooms indicate disconnected zones during risk analysis.
+              {activeTab === "responder"
+                ? "Blue = responder entry path, green = civilian evacuation path, amber = corridors both use. Red dashed corridors are blocked (hover for the reason). ⚠ incident, 🚒 entry, 👥 civilian start."
+                : "Green paths indicate recommended routes. Hover over red dashed corridors to view blockage reasons. Red rooms indicate disconnected zones during risk analysis."}
             </div>
           </section>
 
@@ -738,11 +923,21 @@ export default function App() {
             )}
 
             {activeTab === "responder" && (
-              !responderData ? (
+              responderError ? (
+                <div className="results">
+                  <div className="result-status danger">
+                    <span>●</span>
+                    <div>
+                      <strong>Cannot calculate route</strong>
+                      <small>{responderError}</small>
+                    </div>
+                  </div>
+                </div>
+              ) : !responderData ? (
                 <div className="empty-state">
                   <div className="empty-icon">🚒</div>
                   <h3>Ready for dispatch</h3>
-                  <p>Select entry point and incident location to route responders.</p>
+                  <p>Choose the emergency type, entry point and incident location, then click <b>Find Entry Path & Overlap</b>.</p>
                 </div>
               ) : (
                 <div className="results">
@@ -765,7 +960,7 @@ export default function App() {
                       </div>
 
                       <div className="route-card" style={{ marginTop: "12px" }}>
-                        <small>PRIMARY ENTRY PATH</small>
+                        <small>PRIMARY ENTRY PATH (RESPONDERS)</small>
                         <div className="route">
                           {responderData.primary_route.map(id => nodeMap[id]?.label || id).join(" ➔ ")}
                         </div>
@@ -780,6 +975,68 @@ export default function App() {
                         )}
                       </div>
                     </>
+                  )}
+
+                  {/* CIVILIAN ROUTE */}
+                  {responderData.civilian_route?.length > 0 ? (
+                    <div className="route-card" style={{ marginTop: "12px" }}>
+                      <small>
+                        CIVILIAN EVACUATION ROUTE ({nodeMap[responderData.civilian_start]?.label || responderData.civilian_start} ➔ {nodeMap[responderData.civilian_exit]?.label || responderData.civilian_exit})
+                      </small>
+                      <div className="route">
+                        {responderData.civilian_route.map(id => nodeMap[id]?.label || id).join(" ➔ ")}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="result-status danger" style={{ marginTop: "12px" }}>
+                      <span>●</span>
+                      <div>
+                        <strong>Civilians cannot reach an exit</strong>
+                        <small>
+                          No exit is reachable from {nodeMap[responderData.civilian_start]?.label || responderData.civilian_start} with these corridors blocked.
+                        </small>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OVERLAP */}
+                  {responderData.primary_route?.length > 0 && responderData.civilian_route?.length > 0 && (
+                    responderData.shared_corridors?.length > 0 ? (
+                      <div className="overlap-card">
+                        <div className="overlap-title">
+                          <span>⚠</span>
+                          {responderData.shared_corridors.length} shared corridor{responderData.shared_corridors.length > 1 ? "s" : ""} (responders and civilians)
+                        </div>
+                        <ul>
+                          {responderData.shared_corridors.map(({ edge, counterflow }, i) => (
+                            <li key={i}>
+                              <strong>{nodeMap[edge[0]]?.label || edge[0]} ↔ {nodeMap[edge[1]]?.label || edge[1]}</strong>
+                              <span className={counterflow ? "flow-tag counter" : "flow-tag same"}>
+                                {counterflow ? "head-on" : "same direction"}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        {responderData.civilian_conflict_free_route?.length > 0 ? (
+                          <p className="overlap-hint">
+                            Civilians can avoid the overlap via{" "}
+                            <b>{responderData.civilian_conflict_free_route.map(id => nodeMap[id]?.label || id).join(" ➔ ")}</b>.
+                          </p>
+                        ) : (
+                          <p className="overlap-hint">
+                            No exit is reachable without sharing a corridor with responders. Stage the entry before civilians move through it.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="result-status success" style={{ marginTop: "12px" }}>
+                        <span>●</span>
+                        <div>
+                          <strong>No overlap</strong>
+                          <small>Responders and civilians use different corridors.</small>
+                        </div>
+                      </div>
+                    )
                   )}
                 </div>
               )
