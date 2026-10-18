@@ -79,7 +79,7 @@ function BlockedEdge({
   );
 }
 
-const edgeKey = (u, v) => [u, v].sort().join("-");
+const edgeKey = (u, v) => [u, v].filter(Boolean).sort().join("-");
 
 function blockedReasonFor(label) {
   const l = (label || "").toLowerCase();
@@ -112,15 +112,13 @@ export default function App() {
   // First Responder State
   const [entryPoint, setEntryPoint] = useState("exitA");
   const [incidentLoc, setIncidentLoc] = useState("lab1");
-  const [civilianStart, setCivilianStart] = useState(""); // "" = same as incident
-  const [responderEmergency, setResponderEmergency] = useState("fire"); // "none" = no emergency
+  const [civilianStart, setCivilianStart] = useState("");
+  const [responderEmergency, setResponderEmergency] = useState("fire");
   const [responderBlockages, setResponderBlockages] = useState([]);
   const [responderData, setResponderData] = useState(null);
   const [responderError, setResponderError] = useState(null);
   const [responderLoading, setResponderLoading] = useState(false);
 
-  // Any change to the responder inputs makes the last result stale, so clear it
-  // rather than draw old routes over a newly selected set of blocked corridors.
   useEffect(() => {
     setResponderData(null);
     setResponderError(null);
@@ -135,11 +133,17 @@ export default function App() {
       fetch(`${API}/emergencies`).then(r => r.json())
     ])
       .then(([b, e]) => {
-        b.edges = b.edges.map(edge =>
-          Array.isArray(edge) ? edge : [edge.source, edge.target]
-        );
+        if (b && Array.isArray(b.edges)) {
+          b.edges = b.edges.map(edge =>
+            Array.isArray(edge) ? edge : [edge.source, edge.target]
+          );
+        }
         setBuilding(b);
-        setEmergencies(e);
+        setEmergencies(e || {});
+        if (b?.nodes?.length > 0) {
+          const firstNonExit = b.nodes.find(n => !n.id.startsWith("exit"));
+          if (firstNonExit) setStart(firstNonExit.id);
+        }
       })
       .catch(error => {
         console.error("Backend connection error:", error);
@@ -151,20 +155,20 @@ export default function App() {
   ========================= */
   const nodeMap = useMemo(() => {
     const map = {};
-    building?.nodes.forEach(n => {
+    building?.nodes?.forEach(n => {
       map[n.id] = n;
     });
     return map;
   }, [building]);
 
   /* =========================
-     RESPONDER TAB: BLOCKED CORRIDORS (live from selection)
+     RESPONDER TAB: BLOCKED CORRIDORS
   ========================= */
   const responderBlocked = useMemo(() => {
-    const map = new Map(); // edge key -> reason
+    const map = new Map();
     const em = emergencies?.[responderEmergency];
     (em?.blocked_edges || []).forEach(([u, v]) =>
-      map.set(edgeKey(u, v), blockedReasonFor(em.label || responderEmergency))
+      map.set(edgeKey(u, v), blockedReasonFor(em?.label || responderEmergency))
     );
     responderBlockages.forEach(([u, v]) => {
       if (!map.has(edgeKey(u, v))) map.set(edgeKey(u, v), "Simulated corridor blockage.");
@@ -176,11 +180,12 @@ export default function App() {
      MAP NODES
   ========================= */
   const nodes = useMemo(() => {
-    if (!building) return [];
+    if (!building?.nodes) return [];
 
     const inEvac = activeTab === "evacuation";
     const inResp = activeTab === "responder";
 
+    const evacRoute = evacResult?.route || [];
     const reachableExits = new Set(evacResult?.reachable_exits || []);
     const unreachableRooms = new Set(inEvac ? riskResult?.unreachable_rooms || [] : []);
     const responderRoute = new Set(inResp ? responderData?.primary_route || [] : []);
@@ -188,8 +193,10 @@ export default function App() {
     const sharedNodes = new Set();
     if (inResp) {
       (responderData?.shared_corridors || []).forEach(({ edge }) => {
-        sharedNodes.add(edge[0]);
-        sharedNodes.add(edge[1]);
+        if (edge && edge.length >= 2) {
+          sharedNodes.add(edge[0]);
+          sharedNodes.add(edge[1]);
+        }
       });
     }
     const civStart = civilianStart || incidentLoc;
@@ -197,7 +204,7 @@ export default function App() {
     return building.nodes.map(n => {
       const isExit = n.id.startsWith("exit");
       const isUnavailableExit = inEvac && isExit && evacResult && !reachableExits.has(n.id);
-      const isEvacRouteNode = inEvac && evacResult?.route?.includes(n.id);
+      const isEvacRouteNode = inEvac && evacRoute.includes(n.id);
       const isUnreachableRoom = unreachableRooms.has(n.id);
 
       let borderStyle = "1px solid #cbd5e1";
@@ -237,8 +244,7 @@ export default function App() {
         bgStyle = "#dcfce7";
       }
 
-      // Role markers on the responder map
-      let label = n.label;
+      let label = n.label || n.id;
       if (inResp) {
         if (n.id === incidentLoc) label = `⚠ ${label}`;
         if (n.id === entryPoint) label = `🚒 ${label}`;
@@ -247,7 +253,7 @@ export default function App() {
 
       return {
         id: n.id,
-        position: { x: n.x, y: n.y },
+        position: { x: n.x || 0, y: n.y || 0 },
         data: { label },
         style: {
           padding: 12,
@@ -268,11 +274,12 @@ export default function App() {
      MAP EDGES
   ========================= */
   const edges = useMemo(() => {
-    if (!building) return [];
+    if (!building?.edges) return [];
 
     const inEvac = activeTab === "evacuation";
     const inResp = activeTab === "responder";
 
+    const evacRoute = evacResult?.route || [];
     const baseBlocked = new Set(
       inEvac ? (evacResult?.blocked_edges || []).map(([u, v]) => edgeKey(u, v)) : []
     );
@@ -282,15 +289,16 @@ export default function App() {
 
     const routeEdgeSet = route => {
       const set = new Set();
-      for (let i = 0; i < (route || []).length - 1; i++) {
-        set.add(edgeKey(route[i], route[i + 1]));
+      const safeRoute = route || [];
+      for (let i = 0; i < safeRoute.length - 1; i++) {
+        set.add(edgeKey(safeRoute[i], safeRoute[i + 1]));
       }
       return set;
     };
     const responderEdges = inResp ? routeEdgeSet(responderData?.primary_route) : new Set();
     const civilianEdges = inResp ? routeEdgeSet(responderData?.civilian_route) : new Set();
     const sharedEdges = new Set(
-      inResp ? (responderData?.shared_corridors || []).map(({ edge }) => edgeKey(edge[0], edge[1])) : []
+      inResp ? (responderData?.shared_corridors || []).map(({ edge }) => edgeKey(edge?.[0], edge?.[1])) : []
     );
 
     const emergencyLabel =
@@ -306,9 +314,9 @@ export default function App() {
 
       const inEvacRoute =
         inEvac &&
-        evacResult?.route?.includes(a) &&
-        evacResult?.route?.includes(b) &&
-        Math.abs(evacResult.route.indexOf(a) - evacResult.route.indexOf(b)) === 1;
+        evacRoute.includes(a) &&
+        evacRoute.includes(b) &&
+        Math.abs(evacRoute.indexOf(a) - evacRoute.indexOf(b)) === 1;
 
       const isShared = sharedEdges.has(key);
       const inResponderRoute = responderEdges.has(key);
@@ -355,7 +363,6 @@ export default function App() {
   async function calculateCombinedEvacuationAndRisk() {
     setLoading(true);
     try {
-      // Run Evacuation Path Request
       const evacRes = await fetch(`${API}/evacuation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -369,7 +376,6 @@ export default function App() {
       const evacData = await evacRes.json();
       setEvacResult(evacData);
 
-      // Run Risk Analysis Simulation Request
       const riskRes = await fetch(`${API}/risk-analysis`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -428,13 +434,13 @@ export default function App() {
   };
 
   const toggleSimulatedBlockage = ([u, v]) => {
-    const pairKey = [u, v].sort().join("-");
+    const pairKey = edgeKey(u, v);
     const exists = simulatedBlockages.some(
-      ([x, y]) => [x, y].sort().join("-") === pairKey
+      ([x, y]) => edgeKey(x, y) === pairKey
     );
     if (exists) {
       setSimulatedBlockages(
-        simulatedBlockages.filter(([x, y]) => [x, y].sort().join("-") !== pairKey)
+        simulatedBlockages.filter(([x, y]) => edgeKey(x, y) !== pairKey)
       );
     } else {
       setSimulatedBlockages([...simulatedBlockages, [u, v]]);
@@ -442,7 +448,7 @@ export default function App() {
   };
 
   const selectAllBlockages = () => {
-    if (!building) return;
+    if (!building?.edges) return;
     const allEdges = building.edges.map(([u, v]) => [u, v]);
     setSimulatedBlockages(allEdges);
   };
@@ -462,6 +468,18 @@ export default function App() {
       </div>
     );
   }
+
+  // Safe Math Fallbacks for Risk Breakdown Box
+  const breakdown = riskResult?.breakdown || {};
+  const blockedCount = breakdown.blocked_count ?? 0;
+  const totalEdges = breakdown.total_edges ?? building?.edges?.length ?? 1;
+  const blockagePct = breakdown.blockage_pct ?? 0;
+  const blockagePoints = breakdown.blockage_points ?? 0;
+  const totalOccupants = breakdown.total_occupants ?? people ?? 0;
+  const reachableCapacity = breakdown.reachable_capacity ?? 0;
+  const capacityStressPct = breakdown.capacity_stress_pct ?? 0;
+  const capacityPoints = breakdown.capacity_points ?? 0;
+  const overrideReason = breakdown.override_reason || null;
 
   return (
     <div className="app">
@@ -517,11 +535,11 @@ export default function App() {
 
           <div className="quick-info">
             <div>
-              <strong>{building.nodes.length}</strong>
+              <strong>{building.nodes?.length || 0}</strong>
               <span>Locations</span>
             </div>
             <div>
-              <strong>{building.edges.length}</strong>
+              <strong>{building.edges?.length || 0}</strong>
               <span>Connections</span>
             </div>
           </div>
@@ -545,9 +563,9 @@ export default function App() {
                   <label>Starting Location</label>
                   <select value={start} onChange={e => setStart(e.target.value)}>
                     {building.nodes
-                      .filter(n => !n.id.startsWith("exit"))
+                      ?.filter(n => !n.id.startsWith("exit"))
                       .map(n => (
-                        <option key={n.id} value={n.id}>{n.label}</option>
+                        <option key={n.id} value={n.id}>{n.label || n.id}</option>
                       ))}
                   </select>
                 </div>
@@ -556,7 +574,7 @@ export default function App() {
                   <label>Emergency Type</label>
                   <select value={emergency} onChange={e => setEmergency(e.target.value)}>
                     {Object.entries(emergencies).map(([id, e]) => (
-                      <option key={id} value={id}>{e.label}</option>
+                      <option key={id} value={id}>{e.label || id}</option>
                     ))}
                   </select>
                 </div>
@@ -597,10 +615,10 @@ export default function App() {
                   </div>
 
                   <div className="corridor-list-container">
-                    {building.edges.map(([u, v], idx) => {
-                      const pairKey = [u, v].sort().join("-");
+                    {building.edges?.map(([u, v], idx) => {
+                      const pairKey = edgeKey(u, v);
                       const checked = simulatedBlockages.some(
-                        ([x, y]) => [x, y].sort().join("-") === pairKey
+                        ([x, y]) => edgeKey(x, y) === pairKey
                       );
                       return (
                         <label key={idx} className="corridor-checkbox-card">
@@ -683,7 +701,7 @@ export default function App() {
                   <select value={responderEmergency} onChange={e => setResponderEmergency(e.target.value)}>
                     <option value="none">None (no emergency blockages)</option>
                     {Object.entries(emergencies).map(([id, e]) => (
-                      <option key={id} value={id}>{e.label}</option>
+                      <option key={id} value={id}>{e.label || id}</option>
                     ))}
                   </select>
                   {responderEmergency !== "none" && (
@@ -701,8 +719,8 @@ export default function App() {
                 <div className="form-group">
                   <label>Entry Point (Exit/Access Door)</label>
                   <select value={entryPoint} onChange={e => setEntryPoint(e.target.value)}>
-                    {building.nodes.map(n => (
-                      <option key={n.id} value={n.id}>{n.label}</option>
+                    {building.nodes?.map(n => (
+                      <option key={n.id} value={n.id}>{n.label || n.id}</option>
                     ))}
                   </select>
                 </div>
@@ -711,9 +729,9 @@ export default function App() {
                   <label>Incident Location</label>
                   <select value={incidentLoc} onChange={e => setIncidentLoc(e.target.value)}>
                     {building.nodes
-                      .filter(n => !n.id.startsWith("exit"))
+                      ?.filter(n => !n.id.startsWith("exit"))
                       .map(n => (
-                        <option key={n.id} value={n.id}>{n.label}</option>
+                        <option key={n.id} value={n.id}>{n.label || n.id}</option>
                       ))}
                   </select>
                 </div>
@@ -723,9 +741,9 @@ export default function App() {
                   <select value={civilianStart} onChange={e => setCivilianStart(e.target.value)}>
                     <option value="">Same as incident location</option>
                     {building.nodes
-                      .filter(n => !n.id.startsWith("exit"))
+                      ?.filter(n => !n.id.startsWith("exit"))
                       .map(n => (
-                        <option key={n.id} value={n.id}>{n.label}</option>
+                        <option key={n.id} value={n.id}>{n.label || n.id}</option>
                       ))}
                   </select>
                 </div>
@@ -746,7 +764,7 @@ export default function App() {
                   </div>
 
                   <div className="corridor-list-container">
-                    {building.edges.map(([u, v], idx) => {
+                    {building.edges?.map(([u, v], idx) => {
                       const k = edgeKey(u, v);
                       const fromEmergency =
                         responderEmergency !== "none" &&
@@ -847,15 +865,54 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* SIMULATED RISK SCORE BANNER */}
+                  {/* SIMULATED RISK SCORE BANNER & BREAKDOWN */}
                   {riskResult && (
-                    <div className="result-status success" style={{ background: "#fef3c7", borderColor: "#f59e0b", marginTop: "10px" }}>
-                      <span>●</span>
-                      <div>
-                        <strong style={{ color: "#b45309" }}>Simulated Risk Score: {riskResult.risk_score} / 100</strong>
-                        <small style={{ display: "block", fontSize: "0.75rem", color: "#78350f" }}>
-                          *Simulated graph-based risk score, not a prediction of actual injuries or deaths.
-                        </small>
+                    <div 
+                      className="result-status success" 
+                      style={{ 
+                        background: riskResult.risk_score === 100 ? "#fee2e2" : "#fef3c7", 
+                        borderColor: riskResult.risk_score === 100 ? "#f87171" : "#f59e0b", 
+                        marginTop: "10px",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: "8px"
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
+                        <span>●</span>
+                        <strong style={{ color: riskResult.risk_score === 100 ? "#991b1b" : "#b45309", fontSize: "14px" }}>
+                          Simulated Risk Score: {riskResult.risk_score} / 100
+                        </strong>
+                      </div>
+
+                      {/* EXPLANATION BOX FOR THE USER */}
+                      <div style={{
+                        width: "100%",
+                        background: "rgba(255, 255, 255, 0.6)",
+                        padding: "10px",
+                        borderRadius: "8px",
+                        fontSize: "0.8rem",
+                        color: "#334155",
+                        border: "1px solid rgba(0,0,0,0.05)"
+                      }}>
+                        <strong style={{ display: "block", marginBottom: "4px", color: "#0f172a" }}>
+                          How this score was calculated:
+                        </strong>
+
+                        {overrideReason ? (
+                          <p style={{ margin: 0, color: riskResult.risk_score === 100 ? "#991b1b" : "#15803d", fontWeight: 600 }}>
+                            ⚡ {overrideReason}
+                          </p>
+                        ) : (
+                          <ul style={{ margin: 0, paddingLeft: "16px", lineHeight: "1.5" }}>
+                            <li>
+                              <b>Corridor Failure (50% Weight):</b> {blockedCount} of {totalEdges} corridors blocked ({blockagePct}%) → <b>+{blockagePoints} pts</b>
+                            </li>
+                            <li>
+                              <b>Exit Capacity Stress (50% Weight):</b> {totalOccupants} people vs {reachableCapacity} exit capacity ({capacityStressPct}% strain) → <b>+{capacityPoints} pts</b>
+                            </li>
+                          </ul>
+                        )}
                       </div>
                     </div>
                   )}
@@ -864,7 +921,7 @@ export default function App() {
                   <div className="metrics" style={{ marginTop: "12px" }}>
                     <div className="metric-card">
                       <small>RECOMMENDED EXIT</small>
-                      <strong>{nodeMap[evacResult.recommended_exit]?.label || "None"}</strong>
+                      <strong>{nodeMap[evacResult.recommended_exit]?.label || evacResult.recommended_exit || "None"}</strong>
                     </div>
 
                     <div className="metric-card">
@@ -877,12 +934,16 @@ export default function App() {
                   <div className="route-card" style={{ marginTop: "12px" }}>
                     <small>RECOMMENDED ROUTE</small>
                     <div className="route">
-                      {evacResult.route.map((id, index) => (
-                        <React.Fragment key={id}>
-                          <span className="route-node">{nodeMap[id]?.label}</span>
-                          {index < evacResult.route.length - 1 && <span className="route-arrow">→</span>}
-                        </React.Fragment>
-                      ))}
+                      {(evacResult.route || []).length > 0 ? (
+                        evacResult.route.map((id, index) => (
+                          <React.Fragment key={id}>
+                            <span className="route-node">{nodeMap[id]?.label || id}</span>
+                            {index < evacResult.route.length - 1 && <span className="route-arrow">→</span>}
+                          </React.Fragment>
+                        ))
+                      ) : (
+                        <span style={{ color: "#dc2626", fontWeight: 600 }}>No valid route found.</span>
+                      )}
                     </div>
                   </div>
 
@@ -894,11 +955,11 @@ export default function App() {
                         <div className="capacity" key={id}>
                           <div className="capacity-name">
                             <span className="capacity-icon">⇥</span>
-                            {nodeMap[id]?.label}
+                            {nodeMap[id]?.label || id}
                           </div>
 
                           <div className="capacity-bar">
-                            <div style={{ width: `${Math.min((x.assigned / x.capacity) * 100, 100)}%` }}></div>
+                            <div style={{ width: `${Math.min((x.assigned / (x.capacity || 1)) * 100, 100)}%` }}></div>
                           </div>
 
                           <strong>{x.assigned}/{x.capacity}</strong>
@@ -962,7 +1023,7 @@ export default function App() {
                       <div className="route-card" style={{ marginTop: "12px" }}>
                         <small>PRIMARY ENTRY PATH (RESPONDERS)</small>
                         <div className="route">
-                          {responderData.primary_route.map(id => nodeMap[id]?.label || id).join(" ➔ ")}
+                          {(responderData.primary_route || []).map(id => nodeMap[id]?.label || id).join(" ➔ ")}
                         </div>
 
                         {responderData.alternative_route?.length > 0 && (
@@ -1010,7 +1071,7 @@ export default function App() {
                         <ul>
                           {responderData.shared_corridors.map(({ edge, counterflow }, i) => (
                             <li key={i}>
-                              <strong>{nodeMap[edge[0]]?.label || edge[0]} ↔ {nodeMap[edge[1]]?.label || edge[1]}</strong>
+                              <strong>{nodeMap[edge?.[0]]?.label || edge?.[0]} ↔ {nodeMap[edge?.[1]]?.label || edge?.[1]}</strong>
                               <span className={counterflow ? "flow-tag counter" : "flow-tag same"}>
                                 {counterflow ? "head-on" : "same direction"}
                               </span>

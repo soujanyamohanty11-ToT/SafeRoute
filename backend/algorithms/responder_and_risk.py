@@ -1,7 +1,6 @@
 from collections import deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-
 Edge = Tuple[str, str]
 
 
@@ -54,8 +53,6 @@ def find_responder_paths(
             "status": "No route available",
         }
 
-    # Removing each primary-route corridor in turn reveals alternate paths,
-    # including alternatives when the primary path is a single corridor.
     alternatives = []
     for u, v in zip(primary, primary[1:]):
         candidate = bfs_path({normalize_edge(u, v)})
@@ -77,6 +74,16 @@ def analyze_risk_scenario(
     simulated_blocked_corridors: List[Edge],
     exit_ids: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
+    """
+    Evaluates building graph resilience using deterministic reachability and exit capacity stress.
+
+    Risk Logic (Balanced 50/50 Split):
+    1. Hard Override (100/100): If ANY room is completely trapped with zero exit paths.
+    2. Zero Risk (0/100): If no simulated corridor blockages exist.
+    3. Scaled Risk (0-99):
+       - Corridor Failure Ratio (50% Weight)
+       - Exit Capacity Strain (50% Weight)
+    """
     blocked = {
         normalize_edge(u, v)
         for u, v in simulated_blocked_corridors
@@ -92,6 +99,11 @@ def analyze_risk_scenario(
         }
     exits &= node_ids
     rooms = [node for node in nodes if node["id"] not in exits]
+
+    # Map exit capacities
+    exit_capacities = {
+        node["id"]: node.get("capacity", 50) for node in nodes if node["id"] in exits
+    }
 
     adjacency = {node_id: [] for node_id in node_ids}
 
@@ -113,9 +125,10 @@ def analyze_risk_scenario(
     affected_occupants = 0
     total_occupants = 0
 
+    # 1. BFS Traversal Check per Room
     for room in rooms:
         room_id = room["id"]
-        occupants = max(0, int(room.get("occupants", 0)))
+        occupants = max(0, int(room.get("occupants", 20)))
         total_occupants += occupants
 
         queue = deque([room_id])
@@ -137,25 +150,52 @@ def analyze_risk_scenario(
             unreachable_rooms.append(room_id)
             affected_occupants += occupants
 
-    room_ratio = len(unreachable_rooms) / len(rooms) if rooms else 0
-    occupant_ratio = (
-        affected_occupants / total_occupants if total_occupants else 0
-    )
-    risk_score = round(min(100, 50 * room_ratio + 50 * occupant_ratio), 1)
+    # 2. Metric Calculations with Equal 50/50 Weights
+    total_edges = len(edges) if edges else 1
+    blocked_count = len(simulated_blocked_corridors)
+    blockage_pct = round((blocked_count / total_edges) * 100)
 
+    # Reachable capacity across remaining exit connections
+    reachable_capacity = sum(
+        cap for e_id, cap in exit_capacities.items()
+        if len(adjacency.get(e_id, [])) > 0
+    )
+
+    capacity_deficit = max(0, total_occupants - reachable_capacity)
+    capacity_stress_pct = (
+        round((capacity_deficit / total_occupants) * 100) if total_occupants > 0 else 0
+    )
+
+    # 50% / 50% Point Allocation
+    blockage_points = round(blockage_pct * 0.5)
+    capacity_points = round(capacity_stress_pct * 0.5)
+
+    # 3. Decision Tree Logic for Final Risk Score
+    if unreachable_rooms:
+        risk_score = 100
+        override_reason = "CRITICAL OVERRIDE: At least one room is completely trapped with zero exit paths."
+    elif not simulated_blocked_corridors:
+        risk_score = 0
+        override_reason = "OPTIMAL: All network corridors are fully operational."
+    else:
+        override_reason = None
+        raw_score = blockage_points + capacity_points
+        risk_score = min(99, round(raw_score))
+
+    # 4. Recommendations Generation
     suggestions = []
     if unreachable_rooms:
         suggestions.append(
-            "Re-open corridor connections around: "
+            "CRITICAL: Immediate corridor restoration required for trapped room(s): "
             + ", ".join(unreachable_rooms)
         )
-    if risk_score > 40:
+    elif risk_score > 50:
         suggestions.append(
-            "Review exit access and capacity near affected rooms."
+            "HIGH STRESS: Reallocate crowd flow toward secondary exits to relieve bottlenecks."
         )
-    if not suggestions:
+    else:
         suggestions.append(
-            "All rooms can still reach an exit in this simulated scenario."
+            "Graph network remains resilient. All locations can reach functional exits."
         )
 
     return {
@@ -164,6 +204,17 @@ def analyze_risk_scenario(
         "total_occupants": total_occupants,
         "risk_score": risk_score,
         "suggestions": suggestions,
+        "breakdown": {
+            "blocked_count": blocked_count,
+            "total_edges": total_edges,
+            "blockage_pct": blockage_pct,
+            "blockage_points": blockage_points,
+            "total_occupants": total_occupants,
+            "reachable_capacity": reachable_capacity,
+            "capacity_stress_pct": capacity_stress_pct,
+            "capacity_points": capacity_points,
+            "override_reason": override_reason,
+        },
     }
 
 
@@ -177,12 +228,6 @@ def find_civilian_route(
     exit_ids: Set[str],
     avoid_edges: Optional[Set[Edge]] = None,
 ) -> Dict[str, Any]:
-    """Shortest route from civilian_start to the nearest reachable exit.
-
-    Also looks for the shortest route to any exit that shares no corridor with
-    `avoid_edges` (the responder route), so the planner can suggest a
-    non-conflicting alternative.
-    """
     avoid = {normalize_edge(u, v) for u, v in (avoid_edges or set())}
 
     def shortest(target: str) -> List[str]:
@@ -227,8 +272,6 @@ def find_civilian_route(
 def find_shared_corridors(
     responder_route: List[str], civilian_route: List[str]
 ) -> List[Dict[str, Any]]:
-    """Corridors used by both groups. `counterflow` is True when responders
-    and civilians traverse the corridor in opposite directions."""
     civ = {}
     for u, v in _route_edges(civilian_route):
         civ[normalize_edge(u, v)] = (u, v)
